@@ -6,7 +6,7 @@ The fourth assignment of the master's level course "BST 260 - Data Science I" at
 
 ## Purpose
 
-The goal of this assignment is to investigate biases in prediction models used for US congressional, senatorial, and presidential elections. This is used to compare the distribution of these bias terms for electoral races in each year and graphically between each of the states. 
+The goal of this assignment is to investigate biases in prediction models used for US congressional, senatorial, and presidential elections. Specifically comparing the distribution of these bias terms for electoral races in each year and graphically between each of the states. 
 
 ## Code
 
