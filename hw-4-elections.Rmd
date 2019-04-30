@@ -1,0 +1,208 @@
+---
+title: "Homework 4: Election Forecasting"
+date: "Due: 11/18/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# How reliable is polling data?
+
+Leading up to the 2016 presidential election, many pollsters predicted that the Democratic candidate, Hillary Clinton, would win a ["decisive victory."][wapo] However, as we all know, the election was won by the Republican candidate, and current president, Donald Trump. During class we discussed how general biases, not accounted for by prediction models, often affect many pollsters in the same way. In this homework, you are going to further investigate these biases through comparisons across both national and state-level races. 
+
+The repository for this homework includes an **.RData** file, `election_polls.RData`, containing a `data.frame` (`polls`) with several years worth of polling data (2008, 2010, 2012, 2014 and 2016). The polls cover federal elections for house representatives, senators and the president, and includes polling data from up to a year before the election date. The Presidential election polls were collected from the [RealClearPolitics website][rcp] and the Congressional and Senatorial polls were collected from the [FiveThirtyEight Github repository][thirty]. 
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+load("elections_polls.RData")
+```
+
+The `polls` `data.frame` contains the following columns:
+
+- `race`: race identifier year_electiontype_location.
+- `race_state`: race identifier year_electiontype_state. In contrast to the previous column, this identifier ignores information about counties and only contains information at the state level.
+- `state`: abbreviation of state of the election.
+- `state_long`: full name of the state.
+- `type`: type of race. Could be either presidential (Pres), senatorial election (Sen-G) or house representative election (House-G).
+- `year`: election year.
+- `pollster`: name of the pollster.
+- `samplesize`: size of the sample used in the poll.
+- `startdate`: start date of the poll. If this date was not available, this will be the same as enddate.
+- `enddate`: end date of the poll.
+- `democrat_name`: name of the democratic candidate.
+- `democrat_poll`: percentage of people from the poll saying they would vote for the democratic candidate. 
+- `democrat_result`: actual percentage of people voting for the democratic candidate in the election.
+- `republican_name`: name of the republican candidate.
+- `republican_poll`: percentage of people from the poll saying they would vote for the republican candidate. 
+- `republican_result`: actual percentage of people voting for the republican candidate in the election.
+
+## Problem 1
+Subset the `polls` `data.frame` to only keep polls which ended within approximately 6 weeks preceding any [Election Day][election-day] (i.e. in October or November). You will be using this smaller data set for the remainder of this homework. Hint: you might need to extract the month from the `enddate`. The `strftime` function might be useful for this.
+
+
+```{r}
+library(tidyverse)
+library(dplyr)
+
+polls_subset <- polls %>% mutate(endmonth = strftime(polls$enddate, "%m")) %>% filter(endmonth %in% c(10,11))
+
+```
+
+
+
+## Problem 2
+For each poll, calculate the difference between the fraction of people saying they would vote for the Republican Party and the fraction of people saying they would vote for the Democratic Party. Add these values to your `data.frame` as a new column named `spread`. Similarly, calculate the true (actual) difference between the fraction of people who ended up voting for the Republican Party and the fraction of people who ended up voting for the Democratic Party. Again, add the true (actual) difference as a new column named `spread_act` to your `data.frame`. 
+
+
+```{r}
+# Calculate the predicted spread
+dems_pred <- (polls_subset$democrat_poll/100)
+gop_pred <- (polls_subset$republican_poll/100)
+spread <- dems_pred - gop_pred
+polls_subset <- data.frame(polls_subset,spread)
+
+# Calculate the actual spread
+dems_act <- (polls_subset$democrat_result/100)
+gop_act <- (polls_subset$republican_result/100)
+spread_act <- dems_act - gop_act
+polls_subset <- data.frame(polls_subset,spread_act)
+```
+
+
+
+## Problem 3
+Now, we are going to collapse polls for each race. For this, we group polls by the type, year, and state of the corresponding election. There are several polls for each race, and each one provides an approximation of the real $d$ value. Generate a point estimate for each race, $\hat{d}$, that summarizes the polls for that race using the following steps: [1] use the column `race_state` to group polls by type, year, and state, and [2] use the `summarize` function to generate a new `data.frame` called `reduced_polls` with the following columns:
+
+1. the mean `spread`,
+2. the standard deviation of the `spread`,
+3. the mean `spread_act`, and
+4. the number of polls per race. 
+
+Make sure you also keep information about the `year` and `state` of each race in this new `data.frame`.
+
+
+```{r}
+
+reduced_polls <- polls_subset %>% group_by(race_state) %>% summarize(mean_spread=mean(spread), sd_spread=sd(spread), mean_spread_act=mean(spread_act), total_polls=n(), year=unique(year), type=unique(type), state=unique(state))
+
+```
+
+
+
+## Problem 4
+Note that the previous question merges different congressional elections held in the same year across districts in a state. Using the collapsed `data.frame` from the previous question, filter out races from congressional elections. Also, filter out races that had less than 3 polls. The `reduced_polls` `data.frame` should now contain only Presidential and Senatorial elections. For each remaining race, build a 95\% confidence interval for $\hat{d}$. Include the boundaries (`upper` and `lower`) of these confidence intervals in the `reduced_polls` `data.frame`.
+
+
+```{r}
+
+reduced_polls <- reduced_polls %>% filter(total_polls>2, type %in% c("Pres", "Sen-G"))
+
+lower <- reduced_polls$mean_spread - 1.96*reduced_polls$sd_spread/sqrt(reduced_polls$total_polls)
+upper <- reduced_polls$mean_spread + 1.96*reduced_polls$sd_spread/sqrt(reduced_polls$total_polls)
+
+reduced_polls <- data.frame(reduced_polls,lower,upper)
+```
+
+
+
+## Problem 5
+For each election type in each year, calculate the fraction of states where the actual result was **outside** of the 95% confidence interval. Which race was the most unpredictable, (i.e. for which race was the polling data most inaccurate compared to the actual result)?
+
+```{r}
+
+predicted <- ifelse(reduced_polls$mean_spread_act >= reduced_polls$lower & reduced_polls$mean_spread_act <= reduced_polls$upper, 0, 1)
+
+reduced_polls <- data.frame(reduced_polls,predicted)
+
+reduced_polls_accuracy <- reduced_polls %>% group_by(type,year) %>% summarize(pred_accuracy = sum(predicted)/length(predicted))
+
+reduced_polls_accuracy
+```
+
+By assigning a value of 1 to each race whose actual mean spread was outside of the 95% CI and then summing these 1's divided by the total number of races for each election type in each year we output a fraction between 0 and 1 where values closer to 0 indicate a highly succesful predicted mean spread compared to the true spread, whereas values closer to 1 indicate a highly unsuccesful predicted mean spread compared to the true spread. Thus we have that the most unpredictable race was the 2012 Senate race and then the 2016 Presidential election.
+
+
+## Problem 6
+Using data from *only* the 2016 presidential election, make a plot of states ($x$-axis) and $\hat{d}$ estimates ($y$-axis). Using the `gg_errorbar` function, include the 95\% confidence intervals of $\hat{d}$ for each state. Finally, using a different color, include the actual results for each state. Describe the resulting plot.
+
+
+```{r}
+library(ggthemes)
+library(ggrepel)
+
+reduced_polls %>% filter(year==2016, type=="Pres") %>% ggplot(aes(reorder(state,mean_spread), mean_spread)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin=lower,ymax=upper)) + 
+  geom_point(aes(state,mean_spread_act), col="red") + 
+  theme_economist() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
+  ggtitle("Voting Spread Percentage - 2016 Presedential Election by State")
+
+
+```
+
+The resulting plot as described in the title presents the Predicted & Actual Spread of Votes 2016 Presedential Election, for each state. The black dot represents the predicted spread of voting percentage with positive values being in favour of the Democrats and negative for the Republicans. The error bars give a 95% confidence interval for these predictions and the red dot is the actual spread observed from the election.
+
+## Problem 7
+Which states did Donald Trump win in the 2016 presidential election, despite the entire 95\% confidence intervals being in favor of his opponent, Hillary Clinton?
+
+```{r}
+DT_surprise_wins <- reduced_polls %>% filter(year==2016, type=="Pres", lower > 0, mean_spread_act < 0)
+DT_surprise_wins
+```
+
+From this output we see in that the states where the 95% CI was entirely on Hillary's side and Trump ended up winning were Florida, Miami, North Carolina, Pennsylvania, and Wisconsin.
+
+## Problem 8
+Looking again at all races, calculate the the difference between $d$ and $\hat{d}$ (Hint: use the data for all races in the `reduced_polls` object created in Problem 4). We call this the bias term. Add these values as a column to `reduced_polls`.
+
+```{r}
+bias <- reduced_polls$mean_spread_act - reduced_polls$mean_spread
+
+reduced_polls <- data.frame(reduced_polls,bias)
+
+```
+
+
+## Problem 9
+Plot and compare the distribution of bias terms for races in each year. Describe the bias patterns. Are these centered around zero? Give possible explanations. 
+
+```{r}
+reduced_polls %>%  ggplot(aes(as.factor(year),bias, colour=type)) +
+  geom_boxplot(aes(fill=year)) +
+  theme_economist() +
+  ggtitle("Distribution of Bias Terms by Year") +
+  theme(legend.text = element_text(angle = 90, hjust = 0.5, vjust = 0.5)) 
+```
+
+From these boxplots we are able to see the distribution of the bias terms for races in each year. We can see that the median for each year is approximately the same distance from the 25th and 75th percentiles. For the most part, there are minimal outliers for each year. However, only 2008 can be said to be centred around zero as each of the other years do not have the median very close to the zero line. Noticeably we have two years where more than 75% of the bias terms are on one side of the zero line, which are 2012 and 2016. A possible explanation for these results could be the predictability of the election. If we consider our answer from Question 5, we have both 2012 and 2016 being the most unpredictable election years which may contribute to their increased bias distance from the zero line. With 2008 being one of the more predictable election years, this could also explain its centring around zero.
+
+## Problem 10
+Using the [__fiftystater__](https://cran.r-project.org/web/packages/fiftystater/index.html) package, create a plot for each of the last three presidential elections showing the bias estimates for each state on a map of the United States. Describe any patterns or differences between the three elections.
+
+```{r}
+library(usmap)
+
+pres_2008 <- reduced_polls %>% filter(type=="Pres", year==2008)
+pres_2012 <- reduced_polls %>% filter(type=="Pres", year==2012)
+pres_2016 <- reduced_polls %>% filter(type=="Pres", year==2016)
+
+
+plot_usmap(regions = "states", values = "bias", data = pres_2008) + ggtitle("2008 Presidential Election Bias By State")
+plot_usmap(regions = "states", values = "bias", data = pres_2012) + ggtitle("2012 Presidential Election Bias By State")
+plot_usmap(regions = "states", values = "bias", data = pres_2016) + ggtitle("2016 Presidential Election Bias By State")
+
+
+```
+
+
+Based on these plots it appears that the on average that many of the states were transitioning from positively biased terms to negatively biased terms moving in chronological order. These negative biases are especially noticeable in the midwestern states as they are a much darker shade of blue which indicates the negative bias. Since we took the bias term to be $d - \hat{d}$ this implies that the true spread of votes was in the opposite direction of the average estimates of the polls, and as I defined the spread to be Democrats minus Republicans, we have that the bias term in favour of the Republicans. This makes intuitive sense knowing that a Republican won the election in 2016 and that it was one of the most unpredictable elections. 
+
+Overall, we see many states near a zero bias in 2008, more variation in 2012, and then a much darker coloured map in 2016.
+
+[wapo]:https://www.washingtonpost.com/news/monkey-cage/wp/2016/11/08/a-comprehensive-average-of-election-forecasts-points-to-a-decisive-clinton-victory/
+[election-day]:https://en.wikipedia.org/wiki/Election_Day_(United_States)
+[rcp]: https://www.realclearpolitics.com/
+[thirty]: https://github.com/fivethirtyeight/data
